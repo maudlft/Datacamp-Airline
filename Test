@@ -1,0 +1,113 @@
+%matplotlib inline
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+pd.set_option('display.max_columns', None)
+import seaborn as sns; sns.set()
+
+import pandas as pd
+import os
+
+
+class FeatureExtractor(object):
+    def __init__(self):
+        pass
+
+    def fit(self, X_df, y_array):
+        pass
+
+    def transform(self, X_df):
+        X_encoded = X_df
+        # path = os.path.dirname(__file__)  # use this in submission
+        path = '.'  # use this in notebook
+        data_weather = pd.read_csv(os.path.join(path, "Submission/external_data.csv"))
+        X_weather = data_weather[['Date', 'AirPort', 'Max TemperatureC']]
+        X_weather = X_weather.rename(
+            columns={'Date': 'DateOfDeparture', 'AirPort': 'Arrival'})
+        
+        X_encoded['year'] = X_encoded['DateOfDeparture'].dt.year
+        X_encoded['month'] = X_encoded['DateOfDeparture'].dt.month
+        X_encoded['day'] = X_encoded['DateOfDeparture'].dt.day
+        X_encoded['weekday'] = X_encoded['DateOfDeparture'].dt.weekday
+        X_encoded['week'] = X_encoded['DateOfDeparture'].dt.week
+        X_encoded['n_days'] = X_encoded['DateOfDeparture'].apply(lambda date: (date - pd.to_datetime("1970-01-01")).days)
+
+        X_encoded = X_encoded.join(pd.get_dummies(X_encoded['year'], prefix='y'))
+        X_encoded = X_encoded.join(pd.get_dummies(X_encoded['month'], prefix='m'))
+        X_encoded = X_encoded.join(pd.get_dummies(X_encoded['day'], prefix='d'))
+        X_encoded = X_encoded.join(pd.get_dummies(X_encoded['weekday'], prefix='wd'))
+        X_encoded = X_encoded.join(pd.get_dummies(X_encoded['week'], prefix='w'))
+        
+        X_encoded = X_encoded.set_index(['DateOfDeparture', 'Arrival'])
+        X_weather = X_weather.set_index(['DateOfDeparture', 'Arrival'])
+        
+        X_encoded = X_encoded.join(X_weather).reset_index()
+
+        X_encoded = X_encoded.join(pd.get_dummies(
+            X_encoded['Departure'], prefix='d'))
+        X_encoded = X_encoded.join(
+            pd.get_dummies(X_encoded['Arrival'], prefix='a'))
+        X_encoded = X_encoded.drop('Departure', axis=1)
+        X_encoded = X_encoded.drop('Arrival', axis=1)
+        
+        X_encoded = X_encoded.drop('DateOfDeparture', axis=1)
+        X_array = X_encoded.values
+        return X_array
+        
+        
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.base import BaseEstimator
+
+class Regressor(BaseEstimator):
+    def __init__(self):
+        self.clf = RandomForestRegressor(n_estimators=10**1.9, max_depth=10**2.7, max_features=10)
+
+    def fit(self, X, y):
+        self.clf.fit(X, y)
+
+    def predict(self, X):
+        return self.clf.predict(X)
+        
+import numpy as np
+import pandas as pd
+from sklearn.cross_validation import ShuffleSplit
+
+
+def train_model(X_df, y_array, skf_is):
+    fe = FeatureExtractor()
+    fe.fit(X_df, y_array)
+    X_array = fe.transform(X_df)
+    # Regression
+    train_is, _ = skf_is
+    X_train_array = np.array([X_array[i] for i in train_is])
+    y_train_array = np.array([y_array[i] for i in train_is])
+    reg = Regressor()
+    reg.fit(X_train_array, y_train_array)
+    return fe, reg
+
+
+def test_model(trained_model, X_df, skf_is):
+    fe, reg = trained_model
+    # Feature extraction
+    X_array = fe.transform(X_df)
+    # Regression
+    _, test_is = skf_is
+    X_test_array = np.array([X_array[i] for i in test_is])
+    y_pred_array = reg.predict(X_test_array)
+    return y_pred_array
+
+
+data = pd.read_csv("data/public/train.csv", index_col=[0],parse_dates=[1])
+X_df = data.drop(['log_PAX'], axis=1)
+y_array = data['log_PAX'].values
+
+skf = ShuffleSplit(y_array.shape[0], n_iter=2, test_size=0.2, random_state=61)
+skf_is = list(skf)[0]
+
+trained_model = train_model(X_df, y_array, skf_is)
+y_pred_array = test_model(trained_model, X_df, skf_is)
+_, test_is = skf_is
+ground_truth_array = y_array[test_is]
+
+score = np.sqrt(np.mean(np.square(ground_truth_array - y_pred_array)))
+print 'RMSE =', score
